@@ -974,6 +974,46 @@ def save_result(
         conn.close()
 
 
+def update_result_title(result_id: str, title: str) -> bool:
+    """Update a result's title and patch its snapshot's playlist_title.
+
+    Called when the user saves a playlist with an edited name so the
+    history feed and deep-link reload reflect the actual saved name.
+
+    Returns:
+        True if a row was updated, False if not found.
+    """
+    conn = ensure_db_initialized()
+    try:
+        row = conn.execute(
+            "SELECT snapshot FROM results WHERE id = ?", (result_id,)
+        ).fetchone()
+        if not row:
+            return False
+
+        try:
+            snapshot = json.loads(row["snapshot"])
+            if isinstance(snapshot, dict):
+                snapshot["playlist_title"] = title
+                snapshot_json = json.dumps(snapshot)
+            else:
+                snapshot_json = row["snapshot"]
+        except (ValueError, TypeError):
+            snapshot_json = row["snapshot"]
+
+        cursor = conn.execute(
+            "UPDATE results SET title = ?, snapshot = ? WHERE id = ?",
+            (title, snapshot_json, result_id),
+        )
+        conn.commit()
+        updated = cursor.rowcount > 0
+        if updated:
+            logger.info("Updated result %s title to %r", result_id, title)
+        return updated
+    finally:
+        conn.close()
+
+
 def get_result(result_id: str) -> dict[str, Any] | None:
     """Fetch a single result by ID, including its snapshot.
 
