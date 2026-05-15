@@ -83,6 +83,10 @@
                                             <input type="radio" name="setup-media-server" value="jellyfin">
                                             <span>Jellyfin</span>
                                         </label>
+                                        <label class="media-server-option">
+                                            <input type="radio" name="setup-media-server" value="subsonic">
+                                            <span>Subsonic</span>
+                                        </label>
                                     </div>
                                 </div>
                                 <!-- Plex fields -->
@@ -115,6 +119,26 @@
                                     <div class="form-group">
                                         <label for="setup-jellyfin-library">Music Library</label>
                                         <input type="text" id="setup-jellyfin-library" value="Music" placeholder="Music library name">
+                                    </div>
+                                </div>
+                                <!-- Subsonic fields -->
+                                <div id="setup-subsonic-fields" class="hidden">
+                                    <div class="form-group">
+                                        <label for="setup-subsonic-url">Subsonic Server URL</label>
+                                        <input type="text" id="setup-subsonic-url" placeholder="http://your-navidrome-server:4533">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="setup-subsonic-username">Username</label>
+                                        <input type="text" id="setup-subsonic-username" placeholder="Your username">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="setup-subsonic-password">Password</label>
+                                        <input type="password" id="setup-subsonic-password" placeholder="Your password">
+                                        <p class="setup-field-hint">Works with Navidrome, Airsonic, Gonic, and other OpenSubsonic servers.</p>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="setup-subsonic-library">Music Folder <span class="optional-label">(optional)</span></label>
+                                        <input type="text" id="setup-subsonic-library" placeholder="Leave blank for all">
                                     </div>
                                 </div>
                                 <div id="setup-plex-error" class="setup-inline-error hidden" role="alert"></div>
@@ -679,6 +703,7 @@
                         <select id="settings-media-server">
                             <option value="plex">Plex</option>
                             <option value="jellyfin">Jellyfin</option>
+                            <option value="subsonic">Subsonic / Navidrome</option>
                         </select>
                     </div>
                     <!-- Plex settings -->
@@ -718,6 +743,30 @@
                         <div class="form-group">
                             <label for="jellyfin-music-library">Music Library</label>
                             <input type="text" id="jellyfin-music-library" value="Music" placeholder="Music library name">
+                        </div>
+                    </div>
+                    <!-- Subsonic settings -->
+                    <div id="settings-subsonic-fields" class="hidden">
+                        <div class="status-indicator" id="subsonic-status">
+                            <span class="status-dot"></span>
+                            <span class="status-text">Not connected</span>
+                        </div>
+                        <div class="form-group">
+                            <label for="subsonic-url">Subsonic Server URL</label>
+                            <input type="text" id="subsonic-url" placeholder="http://your-navidrome-server:4533">
+                        </div>
+                        <div class="form-group">
+                            <label for="subsonic-username">Username</label>
+                            <input type="text" id="subsonic-username" placeholder="Your username">
+                        </div>
+                        <div class="form-group">
+                            <label for="subsonic-password">Password</label>
+                            <input type="password" id="subsonic-password" placeholder="Your password">
+                            <p class="setup-field-hint">Works with Navidrome, Airsonic, Gonic, and other OpenSubsonic servers.</p>
+                        </div>
+                        <div class="form-group">
+                            <label for="subsonic-music-library">Music Folder <span class="optional-label">(optional)</span></label>
+                            <input type="text" id="subsonic-music-library" placeholder="Leave blank for all">
                         </div>
                     </div>
                 </section>
