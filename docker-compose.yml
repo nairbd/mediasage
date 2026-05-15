@@ -41,6 +41,15 @@ services:
       #- LLM_MODEL_ANALYSIS=gemini-2.5-flash
       #- LLM_MODEL_GENERATION=gemini-2.5-flash
 
+      # Optional: Gemini latency tuning
+      # GEMINI_REQUEST_TIMEOUT_SECONDS — hard timeout (seconds) per Gemini call
+      #   Unset = no timeout (default SDK behavior). Recommended: 120.
+      # GEMINI_NARRATIVE_DISABLE_THINKING — when "true", disables Gemini 2.5
+      #   thinking for the playlist-narrative call only. Narrative is short
+      #   creative writing; thinking can stall this call for many minutes.
+      #- GEMINI_REQUEST_TIMEOUT_SECONDS=120
+      #- GEMINI_NARRATIVE_DISABLE_THINKING=true
+
       # Local LLM: Ollama (experimental)
       #- LLM_PROVIDER=ollama
       #- OLLAMA_URL=http://host.docker.internal:11434

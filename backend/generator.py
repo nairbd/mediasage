@@ -47,8 +47,11 @@ def generate_narrative(
     fallback_title = f"{date_suffix} Playlist"
 
     try:
-        # Use analysis model for better creative writing quality
-        response = llm_client.analyze(narrative_prompt, NARRATIVE_SYSTEM)
+        # Use analysis model for better creative writing quality.
+        # disable_thinking=True is opt-in via GEMINI_NARRATIVE_DISABLE_THINKING:
+        # narrative is short creative writing — Gemini 2.5 thinking can spiral
+        # for many minutes here with no benefit.
+        response = llm_client.analyze(narrative_prompt, NARRATIVE_SYSTEM, disable_thinking=True)
         result = llm_client.parse_json_response(response)
 
         # Handle array-wrapped responses (some LLMs wrap in [])

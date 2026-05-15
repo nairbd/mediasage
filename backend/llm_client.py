@@ -2,12 +2,14 @@
 
 import json
 import logging
+import os
 import re
 from dataclasses import dataclass
 from typing import Any
 
 import anthropic
 from google import genai
+from google.genai import errors as genai_errors
 from google.genai import types as genai_types
 import httpx
 from json_repair import repair_json
@@ -165,29 +167,68 @@ class LLMClient:
         )
 
     def _complete_gemini(
-        self, prompt: str, system: str, model: str, max_retries: int = 3
+        self, prompt: str, system: str, model: str, max_retries: int = 3,
+        disable_thinking: bool = False,
     ) -> LLMResponse:
         """Make a completion request to Google Gemini with retry logic.
 
         Gemini 2.5 models have a known issue where responses can be truncated
         due to internal "thinking" consuming output tokens. We retry on
         truncation (MAX_TOKENS finish reason) or empty responses.
+
+        Optional environment variables:
+            GEMINI_REQUEST_TIMEOUT_SECONDS — hard timeout (seconds) per Gemini
+                request. Unset = no timeout (default SDK behavior).
+            GEMINI_NARRATIVE_DISABLE_THINKING — when "true"/"1", and the caller
+                passes disable_thinking=True (currently only the narrative
+                generator), Gemini 2.5 thinking is disabled
+                (thinking_budget=0) for that call to reduce latency.
         """
         last_error = None
+
+        # Build per-call config additions from env
+        extra_config: dict[str, Any] = {}
+
+        if disable_thinking and os.getenv("GEMINI_NARRATIVE_DISABLE_THINKING", "").lower() in ("true", "1", "yes"):
+            extra_config["thinking_config"] = genai_types.ThinkingConfig(thinking_budget=0)
+
+        timeout_str = os.getenv("GEMINI_REQUEST_TIMEOUT_SECONDS", "").strip()
+        if timeout_str:
+            try:
+                timeout_seconds = float(timeout_str)
+                if timeout_seconds > 0:
+                    extra_config["http_options"] = genai_types.HttpOptions(
+                        timeout=int(timeout_seconds * 1000)
+                    )
+            except ValueError:
+                logger.warning("Invalid GEMINI_REQUEST_TIMEOUT_SECONDS=%r; ignoring", timeout_str)
 
         for attempt in range(max_retries):
             logger.info("Calling Gemini API (attempt %d/%d) with %d char prompt",
                        attempt + 1, max_retries, len(prompt))
 
-            response = self._client.models.generate_content(
-                model=model,
-                contents=prompt,
-                config=genai_types.GenerateContentConfig(
-                    system_instruction=system,
-                    # Don't set max_output_tokens - let the model use what it needs
-                    # This avoids truncation from thinking token consumption
-                ),
-            )
+            try:
+                response = self._client.models.generate_content(
+                    model=model,
+                    contents=prompt,
+                    config=genai_types.GenerateContentConfig(
+                        system_instruction=system,
+                        # Don't set max_output_tokens - let the model use what it needs
+                        # This avoids truncation from thinking token consumption
+                        **extra_config,
+                    ),
+                )
+            except genai_errors.ServerError as e:
+                # Gemini occasionally returns transient 5xx (503 UNAVAILABLE,
+                # 504 DEADLINE_EXCEEDED) when its prefill/decode RPC is
+                # cancelled or overloaded. Treat these as retryable.
+                status = getattr(e, "code", None) or getattr(e, "status_code", None)
+                if status in (500, 502, 503, 504):
+                    logger.warning("Gemini transient %s on attempt %d/%d: %s",
+                                   status, attempt + 1, max_retries, e)
+                    last_error = f"Gemini {status} ServerError"
+                    continue
+                raise
 
             # Check finish reason
             finish_reason = None
@@ -279,31 +320,39 @@ class LLMClient:
             model=model,
         )
 
-    def _complete(self, prompt: str, system: str, model: str) -> LLMResponse:
-        """Make a completion request to the configured provider."""
+    def _complete(self, prompt: str, system: str, model: str,
+                  disable_thinking: bool = False) -> LLMResponse:
+        """Make a completion request to the configured provider.
+
+        disable_thinking is honored only by providers that support it (gemini).
+        """
         if self.provider == "anthropic":
             return self._complete_anthropic(prompt, system, model)
         elif self.provider in ("openai", "custom"):
             return self._complete_openai(prompt, system, model)
         elif self.provider == "gemini":
-            return self._complete_gemini(prompt, system, model)
+            return self._complete_gemini(prompt, system, model, disable_thinking=disable_thinking)
         elif self.provider == "ollama":
             return self._complete_ollama(prompt, system, model)
         else:
             raise ValueError(f"Unknown provider: {self.provider}")
 
-    def analyze(self, prompt: str, system: str) -> LLMResponse:
+    def analyze(self, prompt: str, system: str,
+                disable_thinking: bool = False) -> LLMResponse:
         """Use the analysis model for understanding tasks.
 
         Args:
             prompt: User prompt to analyze
             system: System prompt with instructions
+            disable_thinking: If True and provider is gemini and the
+                GEMINI_NARRATIVE_DISABLE_THINKING env var is set,
+                disable Gemini 2.5 thinking for this call.
 
         Returns:
             LLMResponse with content and token counts
         """
         model = self.config.model_analysis
-        return self._complete(prompt, system, model)
+        return self._complete(prompt, system, model, disable_thinking=disable_thinking)
 
     def generate(self, prompt: str, system: str) -> LLMResponse:
         """Use the generation model for track selection.
