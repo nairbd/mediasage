@@ -234,38 +234,34 @@ class JellyfinClient(BaseMediaClient):
         if not self._connected or not self._library_id:
             return []
 
-        try:
-            tracks = []
-            start_index = 0
-            page_size = 1000
+        tracks = []
+        start_index = 0
+        page_size = 200
 
-            with httpx.Client(headers=self._headers, timeout=120.0) as client:
-                while True:
-                    resp = client.get(
-                        f"{self.url}/Items",
-                        params={
-                            "IncludeItemTypes": "Audio",
-                            "Recursive": "true",
-                            "ParentId": self._library_id,
-                            "Fields": self._fields_param(),
-                            "StartIndex": start_index,
-                            "Limit": page_size,
-                        },
-                    )
-                    resp.raise_for_status()
-                    data = resp.json()
-                    items = data.get("Items", [])
-                    if not items:
-                        break
-                    tracks.extend(self._item_to_track(item) for item in items)
-                    if len(tracks) >= data.get("TotalRecordCount", 0):
-                        break
-                    start_index += page_size
+        with httpx.Client(headers=self._headers, timeout=300.0) as client:
+            while True:
+                resp = client.get(
+                    f"{self.url}/Items",
+                    params={
+                        "IncludeItemTypes": "Audio",
+                        "Recursive": "true",
+                        "ParentId": self._library_id,
+                        "Fields": self._fields_param(),
+                        "StartIndex": start_index,
+                        "Limit": page_size,
+                    },
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                items = data.get("Items", [])
+                if not items:
+                    break
+                tracks.extend(self._item_to_track(item) for item in items)
+                if len(tracks) >= data.get("TotalRecordCount", 0):
+                    break
+                start_index += page_size
 
-            return tracks
-        except Exception as e:
-            logger.exception("Failed to get all Jellyfin tracks: %s", e)
-            return []
+        return tracks
 
     def get_all_albums_metadata(self) -> dict[str, dict[str, Any]]:
         """Fetch all albums and return mapping of album_id -> metadata."""
@@ -275,9 +271,9 @@ class JellyfinClient(BaseMediaClient):
         try:
             result = {}
             start_index = 0
-            page_size = 1000
+            page_size = 200
 
-            with httpx.Client(headers=self._headers, timeout=120.0) as client:
+            with httpx.Client(headers=self._headers, timeout=300.0) as client:
                 while True:
                     resp = client.get(
                         f"{self.url}/Items",
@@ -344,7 +340,7 @@ class JellyfinClient(BaseMediaClient):
             page_size = 1000
             fetch_limit = limit if limit > 0 else None
 
-            with httpx.Client(headers=self._headers, timeout=120.0) as client:
+            with httpx.Client(headers=self._headers, timeout=300.0) as client:
                 while True:
                     page_params = dict(params)
                     page_params["StartIndex"] = start_index
