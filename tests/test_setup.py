@@ -50,6 +50,14 @@ def create_mock_config(**overrides):
     mock.llm.ollama_url = defaults["ollama_url"]
     mock.llm.custom_url = defaults["custom_url"]
     mock.defaults = DefaultsConfig(track_count=25)
+    mock.media_server = "plex"
+    mock.jellyfin.url = ""
+    mock.jellyfin.token = ""
+    mock.jellyfin.music_library = ""
+    mock.subsonic.url = ""
+    mock.subsonic.username = ""
+    mock.subsonic.password = ""
+    mock.subsonic.music_library = ""
     return mock
 
 
@@ -66,6 +74,8 @@ class TestSetupStatus:
         with (
             patch("backend.main.get_config", return_value=create_mock_config()),
             patch("backend.main.get_plex_client", return_value=mock_plex),
+            patch("backend.main.get_jellyfin_client", return_value=None),
+            patch("backend.main.get_subsonic_client", return_value=None),
             patch("backend.main.library_cache") as mock_cache,
             patch("backend.main.load_user_yaml_config", return_value={}),
         ):
@@ -101,6 +111,8 @@ class TestSetupStatus:
                 plex_url="", plex_token="", llm_api_key=""
             )),
             patch("backend.main.get_plex_client", return_value=None),
+            patch("backend.main.get_jellyfin_client", return_value=None),
+            patch("backend.main.get_subsonic_client", return_value=None),
             patch("backend.main.library_cache") as mock_cache,
             patch("backend.main.load_user_yaml_config", return_value={}),
         ):
@@ -131,6 +143,8 @@ class TestSetupStatus:
         with (
             patch("backend.main.get_config", return_value=create_mock_config()),
             patch("backend.main.get_plex_client", return_value=None),
+            patch("backend.main.get_jellyfin_client", return_value=None),
+            patch("backend.main.get_subsonic_client", return_value=None),
             patch("backend.main.library_cache") as mock_cache,
             patch("backend.main.load_user_yaml_config", return_value={"setup": {"complete": True}}),
         ):
@@ -265,6 +279,72 @@ class TestSetupValidateAI:
 
         assert response.status_code == 200
         assert response.json()["success"] is True
+
+
+class TestSetupValidateSubsonic:
+    """Tests for POST /api/setup/validate-subsonic."""
+
+    def test_validate_subsonic_success(self, client):
+        """Should return success when Subsonic connects, save config, and reinit client."""
+        mock_temp_client = MagicMock()
+        mock_temp_client.is_connected.return_value = True
+        mock_temp_client.get_music_libraries.return_value = ["Music Library"]
+        mock_temp_client.get_server_name.return_value = "navidrome"
+
+        with (
+            patch("backend.main.SubsonicClient", return_value=mock_temp_client),
+            patch("backend.main.update_config_values"),
+            patch("backend.main.init_subsonic_client") as mock_init,
+        ):
+            response = client.post("/api/setup/validate-subsonic", json={
+                "subsonic_url": "http://navidrome:4533",
+                "subsonic_username": "nairb",
+                "subsonic_password": "secret",
+                "music_library": "Music Library",
+            })
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["server_name"] == "navidrome"
+        assert data["music_libraries"] == ["Music Library"]
+        mock_init.assert_called_once_with(
+            "http://navidrome:4533", "nairb", "secret", "Music Library"
+        )
+
+    def test_validate_subsonic_connection_failure(self, client):
+        """Should return error when Subsonic is_connected is False."""
+        mock_temp_client = MagicMock()
+        mock_temp_client.is_connected.return_value = False
+        mock_temp_client.get_error.return_value = "Invalid Subsonic credentials"
+
+        with patch("backend.main.SubsonicClient", return_value=mock_temp_client):
+            response = client.post("/api/setup/validate-subsonic", json={
+                "subsonic_url": "http://navidrome:4533",
+                "subsonic_username": "nairb",
+                "subsonic_password": "wrong",
+                "music_library": "",
+            })
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is False
+        assert "Invalid Subsonic credentials" in data["error"]
+
+    def test_validate_subsonic_constructor_raises(self, client):
+        """Should return error when SubsonicClient constructor raises (e.g., DNS failure)."""
+        with patch("backend.main.SubsonicClient", side_effect=RuntimeError("nodename nor servname provided")):
+            response = client.post("/api/setup/validate-subsonic", json={
+                "subsonic_url": "http://nonexistent:4533",
+                "subsonic_username": "x",
+                "subsonic_password": "y",
+                "music_library": "",
+            })
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is False
+        assert "nodename nor servname provided" in data["error"]
 
 
 class TestSetupComplete:
