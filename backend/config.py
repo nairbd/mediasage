@@ -7,7 +7,14 @@ from typing import Any
 import yaml
 from dotenv import load_dotenv
 
-from backend.models import AppConfig, DefaultsConfig, JellyfinConfig, LLMConfig, PlexConfig
+from backend.models import (
+    AppConfig,
+    DefaultsConfig,
+    JellyfinConfig,
+    LLMConfig,
+    PlexConfig,
+    SubsonicConfig,
+)
 
 # Load .env file (if it exists) - env vars take priority
 load_dotenv()
@@ -149,6 +156,7 @@ def load_config(config_path: Path | None = None) -> AppConfig:
     # Extract nested config sections
     plex_yaml = yaml_config.get("plex", {})
     jellyfin_yaml = yaml_config.get("jellyfin", {})
+    subsonic_yaml = yaml_config.get("subsonic", {})
     llm_yaml = yaml_config.get("llm", {})
     defaults_yaml = yaml_config.get("defaults", {})
 
@@ -206,6 +214,15 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         ),
     )
 
+    subsonic_config = SubsonicConfig(
+        url=get_env_or_yaml("SUBSONIC_URL", subsonic_yaml.get("url"), ""),
+        username=get_env_or_yaml("SUBSONIC_USERNAME", subsonic_yaml.get("username"), ""),
+        password=get_env_or_yaml("SUBSONIC_PASSWORD", subsonic_yaml.get("password"), ""),
+        music_library=get_env_or_yaml(
+            "SUBSONIC_MUSIC_LIBRARY", subsonic_yaml.get("music_library"), ""
+        ),
+    )
+
     # Determine media server: env var > yaml > auto-detect > default "plex"
     media_server_yaml = yaml_config.get("media_server")
     media_server_env = os.environ.get("MEDIA_SERVER")
@@ -213,6 +230,9 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         media_server = media_server_env
     elif media_server_yaml:
         media_server = media_server_yaml
+    elif subsonic_config.url and not plex_config.url and not jellyfin_config.url:
+        # Auto-detect: Subsonic URL set but not Plex/Jellyfin
+        media_server = "subsonic"
     elif jellyfin_config.url and not plex_config.url:
         # Auto-detect: Jellyfin URL set but not Plex
         media_server = "jellyfin"
@@ -285,6 +305,7 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         media_server=media_server,
         plex=plex_config,
         jellyfin=jellyfin_config,
+        subsonic=subsonic_config,
         llm=llm_config,
         defaults=defaults_config,
     )
@@ -322,6 +343,7 @@ def update_config_values(updates: dict[str, Any]) -> AppConfig:
     # Create updated config by merging updates
     plex_updates = {}
     jellyfin_updates = {}
+    subsonic_updates = {}
     llm_updates = {}
     top_level_updates = {}
 
@@ -341,6 +363,15 @@ def update_config_values(updates: dict[str, Any]) -> AppConfig:
         jellyfin_updates["token"] = updates["jellyfin_token"]
     if "jellyfin_music_library" in updates and updates["jellyfin_music_library"]:
         jellyfin_updates["music_library"] = updates["jellyfin_music_library"]
+
+    if "subsonic_url" in updates and updates["subsonic_url"]:
+        subsonic_updates["url"] = updates["subsonic_url"]
+    if "subsonic_username" in updates and updates["subsonic_username"]:
+        subsonic_updates["username"] = updates["subsonic_username"]
+    if "subsonic_password" in updates and updates["subsonic_password"]:
+        subsonic_updates["password"] = updates["subsonic_password"]
+    if "subsonic_music_library" in updates and updates["subsonic_music_library"]:
+        subsonic_updates["music_library"] = updates["subsonic_music_library"]
 
     if "llm_provider" in updates and updates["llm_provider"]:
         new_provider = updates["llm_provider"]
@@ -384,6 +415,7 @@ def update_config_values(updates: dict[str, Any]) -> AppConfig:
     # Create new config with updates
     new_plex = _config.plex.model_copy(update=plex_updates)
     new_jellyfin = _config.jellyfin.model_copy(update=jellyfin_updates)
+    new_subsonic = _config.subsonic.model_copy(update=subsonic_updates)
     new_llm = _config.llm.model_copy(update=llm_updates)
     new_media_server = top_level_updates.get("media_server", _config.media_server)
 
@@ -391,6 +423,7 @@ def update_config_values(updates: dict[str, Any]) -> AppConfig:
         media_server=new_media_server,
         plex=new_plex,
         jellyfin=new_jellyfin,
+        subsonic=new_subsonic,
         llm=new_llm,
         defaults=_config.defaults,
     )
@@ -403,6 +436,8 @@ def update_config_values(updates: dict[str, Any]) -> AppConfig:
         user_updates["plex"] = plex_updates
     if jellyfin_updates:
         user_updates["jellyfin"] = jellyfin_updates
+    if subsonic_updates:
+        user_updates["subsonic"] = subsonic_updates
     if llm_updates:
         user_updates["llm"] = llm_updates
 
@@ -421,8 +456,11 @@ def get_current_media_client():
     """
     config = get_config()
     if config.media_server == "jellyfin":
-        from backend.jellyfin_client import JellyfinClient, get_jellyfin_client
+        from backend.jellyfin_client import get_jellyfin_client
         return get_jellyfin_client()
+    elif config.media_server == "subsonic":
+        from backend.subsonic_client import get_subsonic_client
+        return get_subsonic_client()
     else:
         from backend.plex_client import get_plex_client
         return get_plex_client()

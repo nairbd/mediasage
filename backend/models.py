@@ -102,6 +102,15 @@ class JellyfinConfig(BaseModel):
     music_library: str = "Music"
 
 
+class SubsonicConfig(BaseModel):
+    """Subsonic / OpenSubsonic server connection settings (Navidrome, Airsonic, Gonic, etc.)."""
+
+    url: str = ""
+    username: str = ""
+    password: str = ""
+    music_library: str = ""  # Optional folder name; most servers have only one
+
+
 class LLMConfig(BaseModel):
     """LLM provider settings."""
 
@@ -135,9 +144,10 @@ class DefaultsConfig(BaseModel):
 class AppConfig(BaseModel):
     """Root configuration object."""
 
-    media_server: Literal["plex", "jellyfin"] = "plex"
+    media_server: Literal["plex", "jellyfin", "subsonic"] = "plex"
     plex: PlexConfig
     jellyfin: JellyfinConfig = JellyfinConfig()
+    subsonic: SubsonicConfig = SubsonicConfig()
     llm: LLMConfig
     defaults: DefaultsConfig = DefaultsConfig()
 
@@ -284,6 +294,7 @@ class SavePlaylistRequest(BaseModel):
     name: str
     rating_keys: list[str]
     description: str = ""  # Playlist description (narrative) saved to Plex
+    result_id: str | None = None  # Optional: history row to update with the saved name
 
     @field_validator("name")
     @classmethod
@@ -424,6 +435,11 @@ class ConfigResponse(BaseModel):
     jellyfin_url: str = ""
     jellyfin_token_set: bool = False
     jellyfin_music_library: str = "Music"
+    # Subsonic fields
+    subsonic_url: str = ""
+    subsonic_username: str = ""
+    subsonic_password_set: bool = False
+    subsonic_music_library: str = ""
     llm_provider: str
     llm_configured: bool
     llm_api_key_set: bool  # True if API key is configured (without revealing it)
@@ -456,6 +472,11 @@ class UpdateConfigRequest(BaseModel):
     jellyfin_url: str | None = None
     jellyfin_token: str | None = None
     jellyfin_music_library: str | None = None
+    # Subsonic fields
+    subsonic_url: str | None = None
+    subsonic_username: str | None = None
+    subsonic_password: str | None = None
+    subsonic_music_library: str | None = None
     llm_provider: str | None = None
     llm_api_key: str | None = None
     model_analysis: str | None = None
@@ -837,6 +858,9 @@ class SetupStatusResponse(BaseModel):
     jellyfin_connected: bool = False
     jellyfin_error: str | None = None
     jellyfin_from_env: bool = False
+    subsonic_connected: bool = False
+    subsonic_error: str | None = None
+    subsonic_from_env: bool = False
     music_libraries: list[str] = []
     llm_configured: bool
     llm_provider: str = ""
@@ -881,6 +905,24 @@ class ValidateJellyfinResponse(BaseModel):
     server_name: str | None = None
     music_libraries: list[str] = []
     user_id: str | None = None
+
+
+class ValidateSubsonicRequest(BaseModel):
+    """Request to validate Subsonic credentials during setup."""
+
+    subsonic_url: str
+    subsonic_username: str
+    subsonic_password: str
+    music_library: str = ""
+
+
+class ValidateSubsonicResponse(BaseModel):
+    """Response from Subsonic validation."""
+
+    success: bool
+    error: str | None = None
+    server_name: str | None = None
+    music_libraries: list[str] = []
 
 
 class ValidateAIRequest(BaseModel):
