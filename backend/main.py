@@ -70,10 +70,13 @@ from backend.models import (
     ValidateJellyfinResponse,
     ValidatePlexRequest,
     ValidatePlexResponse,
+    ValidateSubsonicRequest,
+    ValidateSubsonicResponse,
     album_key,
 )
 from backend.plex_client import PlexClient as PlexClientInstance, get_plex_client, init_plex_client
 from backend.jellyfin_client import JellyfinClient, get_jellyfin_client, init_jellyfin_client
+from backend.subsonic_client import SubsonicClient, get_subsonic_client, init_subsonic_client
 from backend import library_cache
 from backend.llm_client import (
     TOKENS_PER_ALBUM,
@@ -113,6 +116,15 @@ async def lifespan(app: FastAPI):
             config.jellyfin.url,
             config.jellyfin.token,
             config.jellyfin.music_library,
+        )
+
+    # Initialize Subsonic client if configured
+    if config.subsonic.url and config.subsonic.username and config.subsonic.password:
+        init_subsonic_client(
+            config.subsonic.url,
+            config.subsonic.username,
+            config.subsonic.password,
+            config.subsonic.music_library,
         )
 
     # Initialize LLM client if configured
@@ -181,6 +193,8 @@ def _build_config_response(config, plex_client) -> ConfigResponse:
     # Determine music_library based on active media server
     if config.media_server == "jellyfin":
         active_music_library = config.jellyfin.music_library
+    elif config.media_server == "subsonic":
+        active_music_library = config.subsonic.music_library
     else:
         active_music_library = config.plex.music_library
 
@@ -194,6 +208,10 @@ def _build_config_response(config, plex_client) -> ConfigResponse:
         jellyfin_url=config.jellyfin.url,
         jellyfin_token_set=bool(config.jellyfin.token),
         jellyfin_music_library=config.jellyfin.music_library,
+        subsonic_url=config.subsonic.url,
+        subsonic_username=config.subsonic.username,
+        subsonic_password_set=bool(config.subsonic.password),
+        subsonic_music_library=config.subsonic.music_library,
         llm_provider=config.llm.provider,
         llm_configured=_is_llm_configured(config),
         llm_api_key_set=bool(config.llm.api_key),
@@ -245,6 +263,7 @@ async def setup_status() -> SetupStatusResponse:
     config = get_config()
     plex_client = get_plex_client()
     jellyfin_client = get_jellyfin_client()
+    subsonic_client = get_subsonic_client()
 
     # Check data dir writable by actually creating+deleting a temp file
     # (more reliable than os.access for Docker bind mounts)
@@ -267,9 +286,15 @@ async def setup_status() -> SetupStatusResponse:
     jellyfin_connected = jellyfin_client.is_connected() if jellyfin_client else False
     jellyfin_error = jellyfin_client.get_error() if jellyfin_client and not jellyfin_connected else None
 
+    # Subsonic status
+    subsonic_connected = subsonic_client.is_connected() if subsonic_client else False
+    subsonic_error = subsonic_client.get_error() if subsonic_client and not subsonic_connected else None
+
     # Music libraries from active server
     if config.media_server == "jellyfin" and jellyfin_connected and jellyfin_client:
         music_libraries = jellyfin_client.get_music_libraries()
+    elif config.media_server == "subsonic" and subsonic_connected and subsonic_client:
+        music_libraries = subsonic_client.get_music_libraries()
     elif plex_connected and plex_client:
         music_libraries = plex_client.get_music_libraries()
     else:
@@ -309,6 +334,9 @@ async def setup_status() -> SetupStatusResponse:
         jellyfin_connected=jellyfin_connected,
         jellyfin_error=jellyfin_error,
         jellyfin_from_env=bool(os.environ.get("JELLYFIN_URL")),
+        subsonic_connected=subsonic_connected,
+        subsonic_error=subsonic_error,
+        subsonic_from_env=bool(os.environ.get("SUBSONIC_URL")),
         music_libraries=music_libraries,
         llm_configured=llm_configured,
         llm_provider=config.llm.provider,
@@ -398,6 +426,54 @@ async def setup_validate_jellyfin(request: ValidateJellyfinRequest) -> ValidateJ
         server_name=server_name,
         music_libraries=music_libraries,
         user_id=user_id,
+    )
+
+
+@app.post("/api/setup/validate-subsonic", response_model=ValidateSubsonicResponse)
+async def setup_validate_subsonic(request: ValidateSubsonicRequest) -> ValidateSubsonicResponse:
+    """Validate Subsonic / Navidrome credentials and save on success."""
+    try:
+        temp_client = await asyncio.to_thread(
+            SubsonicClient,
+            request.subsonic_url,
+            request.subsonic_username,
+            request.subsonic_password,
+            request.music_library,
+        )
+    except Exception as e:
+        return ValidateSubsonicResponse(success=False, error=str(e))
+
+    if not temp_client.is_connected():
+        return ValidateSubsonicResponse(
+            success=False,
+            error=temp_client.get_error() or "Connection failed",
+        )
+
+    music_libraries = temp_client.get_music_libraries()
+    server_name = temp_client.get_server_name()
+
+    try:
+        update_config_values({
+            "media_server": "subsonic",
+            "subsonic_url": request.subsonic_url,
+            "subsonic_username": request.subsonic_username,
+            "subsonic_password": request.subsonic_password,
+            "subsonic_music_library": request.music_library,
+        })
+    except ConfigSaveError as e:
+        return ValidateSubsonicResponse(success=False, error=str(e))
+
+    init_subsonic_client(
+        request.subsonic_url,
+        request.subsonic_username,
+        request.subsonic_password,
+        request.music_library,
+    )
+
+    return ValidateSubsonicResponse(
+        success=True,
+        server_name=server_name,
+        music_libraries=music_libraries,
     )
 
 
@@ -539,6 +615,21 @@ async def update_configuration(request: UpdateConfigRequest) -> ConfigResponse:
                 config.jellyfin.url,
                 config.jellyfin.token,
                 config.jellyfin.music_library,
+            )
+
+    if any(k in updates for k in [
+        "subsonic_url", "subsonic_username", "subsonic_password", "subsonic_music_library",
+    ]):
+        if (
+            config.subsonic.url
+            and config.subsonic.username
+            and config.subsonic.password
+        ):
+            init_subsonic_client(
+                config.subsonic.url,
+                config.subsonic.username,
+                config.subsonic.password,
+                config.subsonic.music_library,
             )
 
     if any(k in updates for k in ["llm_provider", "llm_api_key", "model_analysis", "model_generation", "ollama_url", "custom_url"]):
@@ -887,6 +978,17 @@ async def save_playlist(request: SavePlaylistRequest) -> SavePlaylistResponse:
         request.rating_keys,
         request.description,
     )
+
+    # Update the history row's title so Recent Activity shows the user's
+    # edited name instead of the original LLM-generated suggestion.
+    if result.get("success") and request.result_id:
+        try:
+            await asyncio.to_thread(
+                library_cache.update_result_title, request.result_id, request.name
+            )
+        except Exception as e:
+            logger.warning("Failed to update result title for %s: %s", request.result_id, e)
+
     return SavePlaylistResponse(**result)
 
 
@@ -1661,8 +1763,28 @@ async def delete_result(result_id: str):
 
 @app.get("/api/art/{rating_key}")
 async def get_album_art(rating_key: str):
-    """Proxy album art from Plex or Jellyfin to avoid exposing credentials to browser."""
+    """Proxy album art from Plex, Jellyfin, or Subsonic to avoid exposing credentials to browser."""
     config = get_config()
+
+    if config.media_server == "subsonic":
+        subsonic_client = get_subsonic_client()
+        if not subsonic_client or not subsonic_client.is_connected():
+            raise HTTPException(status_code=503, detail="Subsonic not connected")
+
+        art_url = subsonic_client.get_art_url(rating_key)
+        if art_url:
+            try:
+                proxy_client = await _get_art_proxy_client()
+                response = await proxy_client.get(art_url)
+                if response.status_code == 200:
+                    return Response(
+                        content=response.content,
+                        media_type=response.headers.get("content-type", "image/jpeg"),
+                    )
+            except Exception:
+                logger.debug("Subsonic art proxy failed for id=%s", rating_key, exc_info=True)
+
+        raise HTTPException(status_code=404, detail="Art not available")
 
     if config.media_server == "jellyfin":
         jellyfin_client = get_jellyfin_client()
