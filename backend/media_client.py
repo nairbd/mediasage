@@ -31,6 +31,16 @@ def normalize_artist(name: str) -> list[str]:
     return variations
 
 
+def decade_to_years(decade: str) -> list[int]:
+    """Convert a decade string like '1980s' to a list of years [1980..1989]."""
+    decade = decade.strip().rstrip("s")
+    try:
+        start = int(decade)
+        return list(range(start, start + 10))
+    except ValueError:
+        return []
+
+
 def is_live_track(title: str, album_title: str) -> bool:
     """Check if a track appears to be a live recording based on title strings.
 

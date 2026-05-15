@@ -316,6 +316,13 @@ function _mediaServerLabel(server) {
     return 'Plex';
 }
 
+function _isSetupServerConnected(status) {
+    if (!status) return false;
+    if (status.media_server === 'jellyfin') return !!status.jellyfin_connected;
+    if (status.media_server === 'subsonic') return !!status.subsonic_connected;
+    return !!status.plex_connected;
+}
+
 async function validateAI(provider, apiKey, ollamaUrl, customUrl) {
     return apiCall('/setup/validate-ai', {
         method: 'POST',
@@ -2850,8 +2857,7 @@ function setupEventListeners() {
     if (mediaServerSelect) {
         mediaServerSelect.addEventListener('change', (e) => {
             _showMediaServerFields(e.target.value);
-            // Re-render filter UI so rating section visibility tracks the new server
-            if (state.config) {
+            if (state.config && e.target.value !== state.config.media_server) {
                 state.config.media_server = e.target.value;
                 updateFilters();
             }
@@ -5304,15 +5310,7 @@ function renderSetupState(status) {
     }
 
     // Step 1: Media Server
-    let isServerConnected;
-    if (status.media_server === 'jellyfin') {
-        isServerConnected = status.jellyfin_connected;
-    } else if (status.media_server === 'subsonic') {
-        isServerConnected = status.subsonic_connected;
-    } else {
-        isServerConnected = status.plex_connected;
-    }
-    if (isServerConnected) {
+    if (_isSetupServerConnected(status)) {
         const serverLabel = _mediaServerLabel(status.media_server);
         setStepDone('plex', `Connected to ${serverLabel} (${status.music_libraries.length} music ${status.music_libraries.length === 1 ? 'library' : 'libraries'})`);
     } else {
@@ -5611,16 +5609,7 @@ function setupWizardEventListeners() {
                 state.setup.status.llm_configured = true;
                 state.setup.status.llm_provider = provider;
                 setStepDone('ai', `Using ${result.provider_name || provider}`);
-                // Auto-trigger sync if media server is also done
-                let serverConnected;
-                if (state.setup.status.media_server === 'jellyfin') {
-                    serverConnected = state.setup.status.jellyfin_connected;
-                } else if (state.setup.status.media_server === 'subsonic') {
-                    serverConnected = state.setup.status.subsonic_connected;
-                } else {
-                    serverConnected = state.setup.status.plex_connected;
-                }
-                if (serverConnected && !state.setup.status.library_synced) {
+                if (_isSetupServerConnected(state.setup.status) && !state.setup.status.library_synced) {
                     state.setup.status.is_syncing = true;
                     triggerSetupSync();
                 }

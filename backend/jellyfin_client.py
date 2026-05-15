@@ -6,23 +6,13 @@ from typing import Any
 
 import httpx
 
-from backend.media_client import BaseMediaClient, is_live_track
+from backend.media_client import BaseMediaClient, decade_to_years, is_live_track
 from backend.models import PlexPlaylistInfo, Track
 
 logger = logging.getLogger(__name__)
 
 # Singleton instance
 _jellyfin_client: "JellyfinClient | None" = None
-
-
-def _decade_to_years(decade: str) -> list[int]:
-    """Convert a decade string like '1980s' to a list of years [1980..1989]."""
-    decade = decade.strip().rstrip("s")
-    try:
-        start = int(decade)
-        return list(range(start, start + 10))
-    except ValueError:
-        return []
 
 
 class JellyfinClient(BaseMediaClient):
@@ -335,7 +325,7 @@ class JellyfinClient(BaseMediaClient):
             if decades:
                 years: list[int] = []
                 for decade in decades:
-                    years.extend(_decade_to_years(decade))
+                    years.extend(decade_to_years(decade))
                 if years:
                     params["Years"] = ",".join(str(y) for y in years)
 
@@ -492,7 +482,7 @@ class JellyfinClient(BaseMediaClient):
             if decades:
                 years: list[int] = []
                 for decade in decades:
-                    years.extend(_decade_to_years(decade))
+                    years.extend(decade_to_years(decade))
                 if years:
                     params["Years"] = ",".join(str(y) for y in years)
 

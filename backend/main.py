@@ -1761,6 +1761,23 @@ async def delete_result(result_id: str):
 # =============================================================================
 
 
+async def _proxy_art_response(
+    art_url: str, log_label: str, log_id: str, headers: dict | None = None
+) -> Response | None:
+    """Fetch art_url through the proxy client and return a Response, or None on failure."""
+    try:
+        proxy_client = await _get_art_proxy_client()
+        response = await proxy_client.get(art_url, headers=headers or {})
+        if response.status_code == 200:
+            return Response(
+                content=response.content,
+                media_type=response.headers.get("content-type", "image/jpeg"),
+            )
+    except Exception:
+        logger.debug("%s art proxy failed for %s", log_label, log_id, exc_info=True)
+    return None
+
+
 @app.get("/api/art/{rating_key}")
 async def get_album_art(rating_key: str):
     """Proxy album art from Plex, Jellyfin, or Subsonic to avoid exposing credentials to browser."""
@@ -1773,16 +1790,9 @@ async def get_album_art(rating_key: str):
 
         art_url = subsonic_client.get_art_url(rating_key)
         if art_url:
-            try:
-                proxy_client = await _get_art_proxy_client()
-                response = await proxy_client.get(art_url)
-                if response.status_code == 200:
-                    return Response(
-                        content=response.content,
-                        media_type=response.headers.get("content-type", "image/jpeg"),
-                    )
-            except Exception:
-                logger.debug("Subsonic art proxy failed for id=%s", rating_key, exc_info=True)
+            result = await _proxy_art_response(art_url, "Subsonic", rating_key)
+            if result:
+                return result
 
         raise HTTPException(status_code=404, detail="Art not available")
 
@@ -1793,19 +1803,14 @@ async def get_album_art(rating_key: str):
 
         art_url = jellyfin_client.get_art_url(rating_key)
         if art_url:
-            try:
-                proxy_client = await _get_art_proxy_client()
-                response = await proxy_client.get(
-                    art_url,
-                    headers={"Authorization": f'MediaBrowser Token="{config.jellyfin.token}"'},
-                )
-                if response.status_code == 200:
-                    return Response(
-                        content=response.content,
-                        media_type=response.headers.get("content-type", "image/jpeg"),
-                    )
-            except Exception:
-                logger.debug("Jellyfin art proxy failed for item_id=%s", rating_key, exc_info=True)
+            result = await _proxy_art_response(
+                art_url,
+                "Jellyfin",
+                rating_key,
+                headers={"Authorization": f'MediaBrowser Token="{config.jellyfin.token}"'},
+            )
+            if result:
+                return result
 
         raise HTTPException(status_code=404, detail="Art not available")
 
@@ -1817,23 +1822,16 @@ async def get_album_art(rating_key: str):
     if not plex_client or not plex_client.is_connected():
         raise HTTPException(status_code=503, detail="Plex not connected")
 
-    # Get raw thumb path from Plex
     thumb_path = await asyncio.to_thread(plex_client.get_thumb_path, rating_key)
     if thumb_path:
-        try:
-            client = await _get_art_proxy_client()
-            thumb_url = f"{config.plex.url}{thumb_path}"
-            response = await client.get(
-                thumb_url,
-                headers={"X-Plex-Token": config.plex.token},
-            )
-            if response.status_code == 200:
-                return Response(
-                    content=response.content,
-                    media_type=response.headers.get("content-type", "image/jpeg"),
-                )
-        except Exception:
-            logger.debug("Plex art proxy failed for rating_key=%s", rating_key, exc_info=True)
+        result = await _proxy_art_response(
+            f"{config.plex.url}{thumb_path}",
+            "Plex",
+            rating_key,
+            headers={"X-Plex-Token": config.plex.token},
+        )
+        if result:
+            return result
 
     raise HTTPException(status_code=404, detail="Art not available")
 

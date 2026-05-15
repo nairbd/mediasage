@@ -4,10 +4,11 @@ import hashlib
 import logging
 import secrets
 from typing import Any
+from urllib.parse import urlencode
 
 import httpx
 
-from backend.media_client import BaseMediaClient, is_live_track
+from backend.media_client import BaseMediaClient, decade_to_years, is_live_track
 from backend.models import PlexPlaylistInfo, Track
 
 logger = logging.getLogger(__name__)
@@ -19,16 +20,6 @@ _subsonic_client: "SubsonicClient | None" = None
 API_VERSION = "1.16.1"
 CLIENT_NAME = "MediaSage"
 PAGE_SIZE = 500  # search3 max per page
-
-
-def _decade_to_years(decade: str) -> list[int]:
-    """Convert a decade string like '1980s' to a list of years [1980..1989]."""
-    decade = decade.strip().rstrip("s")
-    try:
-        start = int(decade)
-        return list(range(start, start + 10))
-    except ValueError:
-        return []
 
 
 class SubsonicClient(BaseMediaClient):
@@ -72,10 +63,15 @@ class SubsonicClient(BaseMediaClient):
         resp = client.get(f"{self.url}/rest/{endpoint}", params=merged)
         resp.raise_for_status()
         body = resp.json().get("subsonic-response", {})
+        self._check_response(body)
+        return body
+
+    @staticmethod
+    def _check_response(body: dict) -> None:
+        """Raise RuntimeError if a Subsonic response carries status='failed'."""
         if body.get("status") == "failed":
             err = body.get("error", {})
             raise RuntimeError(f"Subsonic error {err.get('code')}: {err.get('message')}")
-        return body
 
     def _connect(self) -> None:
         """Ping the server and record version info."""
@@ -297,7 +293,7 @@ class SubsonicClient(BaseMediaClient):
         if decades:
             ys: list[int] = []
             for d in decades:
-                ys.extend(_decade_to_years(d))
+                ys.extend(decade_to_years(d))
             if ys:
                 years_filter = set(ys)
 
@@ -330,10 +326,9 @@ class SubsonicClient(BaseMediaClient):
             return []
 
         try:
-            tracks: list[Track] = []
-
-            with httpx.Client(timeout=300.0) as client:
-                if genres:
+            if genres:
+                tracks: list[Track] = []
+                with httpx.Client(timeout=300.0) as client:
                     seen_ids: set[str] = set()
                     for genre in genres:
                         offset = 0
@@ -356,25 +351,8 @@ class SubsonicClient(BaseMediaClient):
                             if len(songs) < PAGE_SIZE:
                                 break
                             offset += PAGE_SIZE
-                else:
-                    offset = 0
-                    while True:
-                        body = self._get(
-                            client,
-                            "search3.view",
-                            query="",
-                            songCount=PAGE_SIZE,
-                            songOffset=offset,
-                            albumCount=0,
-                            artistCount=0,
-                        )
-                        songs = body.get("searchResult3", {}).get("song", [])
-                        if not songs:
-                            break
-                        tracks.extend(self._song_to_track(s) for s in songs)
-                        if len(songs) < PAGE_SIZE:
-                            break
-                        offset += PAGE_SIZE
+            else:
+                tracks = self.get_all_tracks()
 
             tracks = self._post_filter_tracks(tracks, decades, exclude_live)
 
@@ -511,9 +489,7 @@ class SubsonicClient(BaseMediaClient):
                 resp = client.get(f"{self.url}/rest/createPlaylist.view", params=params)
                 resp.raise_for_status()
                 body = resp.json().get("subsonic-response", {})
-                if body.get("status") == "failed":
-                    err = body.get("error", {})
-                    raise RuntimeError(f"Subsonic error {err.get('code')}: {err.get('message')}")
+                self._check_response(body)
 
                 playlist = body.get("playlist") or {}
                 playlist_id = playlist.get("id")
@@ -580,11 +556,7 @@ class SubsonicClient(BaseMediaClient):
                         resp = client.get(f"{self.url}/rest/updatePlaylist.view", params=params)
                         resp.raise_for_status()
                         body = resp.json().get("subsonic-response", {})
-                        if body.get("status") == "failed":
-                            err = body.get("error", {})
-                            raise RuntimeError(
-                                f"Subsonic error {err.get('code')}: {err.get('message')}"
-                            )
+                        self._check_response(body)
 
                 # Append new songs
                 if rating_keys:
@@ -597,11 +569,7 @@ class SubsonicClient(BaseMediaClient):
                     resp = client.get(f"{self.url}/rest/updatePlaylist.view", params=params)
                     resp.raise_for_status()
                     body = resp.json().get("subsonic-response", {})
-                    if body.get("status") == "failed":
-                        err = body.get("error", {})
-                        raise RuntimeError(
-                            f"Subsonic error {err.get('code')}: {err.get('message')}"
-                        )
+                    self._check_response(body)
                 elif description:
                     # Description-only update
                     self._get(
@@ -654,8 +622,6 @@ class SubsonicClient(BaseMediaClient):
             return None
         params = self._auth_params()
         params["id"] = item_id
-        # Build a query string with the auth params baked in
-        from urllib.parse import urlencode
         return f"{self.url}/rest/getCoverArt.view?{urlencode(params)}"
 
     def get_machine_identifier(self) -> str | None:
